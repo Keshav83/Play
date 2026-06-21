@@ -62,6 +62,64 @@ const registerUser = asyncHandler(async (req,res) => {
     
 })
 
+const loginUser = asyncHandler(async (req,res) => {
+    const {username,password} = req.body;
 
+    if( !username || !password){
+        return res.status(400).json({message : "All fields are required"})
+    }
+    const user = await User.findOne({username : username.toLowerCase()});
 
-export {registerUser}
+    if(!user || !(await user.isPasswordCorrect(password))){
+        throw new ApiError(401,"Invalid username or password")
+    }
+
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+
+    user.refreshToken = refreshToken;
+    await user.save({validateBeforeSave : false});
+
+    const loggedInUser = await User.findById(user._id).select(
+        "-password -refreshToken"
+    )
+
+    if(!loggedInUser){
+        throw new ApiError(500,"Something went wrong while logging in the user")
+    }
+    const options = {
+        httpOnly : true,
+        secure : true
+    }
+
+    return res.status(200).cookie("refreshToken",refreshToken,options).cookie("accessToken",accessToken,options).json(
+        new ApiResponse(200,{loggedInUser, accessToken, refreshToken},"User logged in successfully")
+    )
+
+})
+
+const logoutUser = asyncHandler(async (req,res) => {
+    await User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $unset: {
+                refreshToken: 1
+            }
+        },
+        {
+            new: true
+        }
+    )
+
+    const options = {
+        httpOnly: true,
+        secure: true
+    }
+
+    return res.status(200)
+        .clearCookie("refreshToken", options)
+        .clearCookie("accessToken", options)
+        .json(new ApiResponse(200, {}, "User logged out successfully"))
+})
+
+export {registerUser, loginUser, logoutUser}
